@@ -43,6 +43,8 @@ int main (int argc, char * argv[])
     MQ_RESULT_MESSAGE result;
     struct mq_attr      attr;
     char mq_name1[80], mq_name2[80];
+
+
     sprintf (mq_name1, "J_%s_%d", STUDENT_NAME, getpid());
     sprintf (mq_name2, "R_%s_%d", STUDENT_NAME, getpid());
 
@@ -57,7 +59,13 @@ int main (int argc, char * argv[])
     mq_fd_result = mq_open (mq_name2, O_RDONLY | O_CREAT | O_EXCL, 0600, &attr);
 
     printf ("parent pid:%d\n", getpid());
+
     processID = fork();
+    int i;
+    for(i = 1; i < NROF_WORKERS; i++){
+        if(processID > 0) processID = fork();
+    }
+
     if (processID < 0)
     {
         perror("fork() failed");
@@ -76,38 +84,71 @@ int main (int argc, char * argv[])
             perror ("execlp() failed");
         }
 
-        // fill request message
-        job.id = 1;
-        job.md5hash = 2;
-        job.letter = 'A';
-        job.first = 'B';
-        job.last = 'C';
+        MQ_RESULT_MESSAGE results[MD5_LIST_NROF];
+        int resultsRecevied = 0, msgRecevied = 0;
+        int id = 0, frr = 0;
 
-        sleep (3);
-        // send the request
-        printf ("parent: sending...\n");
-        mq_send (mq_fd_job, (char *) &job, sizeof (job), 0);
+        while(msgRecevied < JOBS_NROF){
+            mq_getattr(mq_fd_result, &attr);
+            if(attr.mq_curmsgs > 0){
+                int j;
+                for(j = 0; j < attr.mq_curmsgs; j++){
+                    mq_receive (mq_fd_result, (char *) &result, sizeof (result), NULL);
+                    msgRecevied++;
+                    if(strcmp(result.result, "") != 0){
+                        MQ_RESULT_MESSAGE r, temp;
+                        r.id = result.id;
+                        sprintf(r.result, result.result);
+                        int k;
+                        for(k = 0; k < resultsRecevied; k++){
+                            if(results[k].id > r.id){
+                                temp.id = results[k].id;
+                                sprintf(temp.result, results[k].result);
+                                results[k].id = r.id;
+                                sprintf(results[k].result, r.result);
+                                r.id = temp.id;
+                                sprintf(r.result, temp.result);
+                            }
+                        }
+                        results[resultsRecevied].id = r.id;
+                        sprintf(results[resultsRecevied].result, r.result);
+                        resultsRecevied++;
+                    }
+                }
+            }
 
-        sleep (3);
-        // read the result and store it in the response message
-        printf ("parent: receiving...\n");
-        mq_receive (mq_fd_result, (char *) &result, sizeof (result), NULL);
+            mq_getattr(mq_fd_job, &attr);
+            if(attr.mq_curmsgs < MQ_MAX_MESSAGES && id < JOBS_NROF){
+                job.md5hash = md5_list[id];
+                job.letter = ALPHABET_START_CHAR + (id % ALPHABET_NROF_CHAR);
+                job.first = ALPHABET_START_CHAR;
+                job.last = ALPHABET_END_CHAR;
+                job.id = id++;
+//                printf ("parent: sending %d\n", job.id);
+                mq_send (mq_fd_job, (char *) &job, sizeof (job), 0);
+            }
+        }
 
-        printf ("parent: received: id=%d, result=%s \n", result.id, result.result);
+        for(i = 0; i < NROF_WORKERS; i++){
+            job.id = -1;
+            mq_send (mq_fd_job, (char *) &job, sizeof (job), 0);
+            printf ("parent: sending %d\n", job.id);
+        }
 
-        sleep (1);
-
-        waitpid (processID, NULL, 0);   // wait for the child
+        for(i = 0; i < NROF_WORKERS; i++){
+          mq_receive (mq_fd_result, (char *) &result, sizeof (result), NULL);
+          printf ("parent: receiving %d\n", result.id);
+        }
 
         mq_close (mq_fd_result);
         mq_close (mq_fd_job);
         mq_unlink (mq_name1);
         mq_unlink (mq_name2);
 
+        for(i = 0; i < MD5_LIST_NROF; i++){
+            printf("%d\n", results[i].id);
+        }
 
-        // else: we are still the parent (which continues this program)
-        waitpid (processID, NULL, 0);   // wait for the child
-        printf ("child %d has been finished\n\n", processID);
     }
     // TODO:
     //  * create the message queues (see message_queue_test() in interprocess_basic.c)

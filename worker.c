@@ -52,19 +52,21 @@ int main (int argc, char * argv[])
     mq_fd_result = mq_open (mq_result, O_WRONLY);
 
     // read the message queue and store it in the request message
-    printf ("                                   child: receiving...\n");
-    mq_receive (mq_fd_job, (char *) &job, sizeof (job), NULL);
+    job.id = 0;
 
-    printf ("                                   child: received: %d, %d, '%c', '%c', '%c'\n",
-            job.id, job.md5hash, job.letter, job.first, job.last);
+    while(job.id > -1){
+        mq_receive (mq_fd_job, (char *) &job, sizeof (job), NULL);
 
-    // fill response message
-    result.id = job.id;
-    sprintf(result.result, ":)");
-    sleep (3);
-    // send the response
-    printf ("                                   child: sending...\n");
-    mq_send (mq_fd_result, (char *) &result, sizeof (result), 0);
+//        printf ("child: received: %d\n", job.id);
+
+        result.id = job.id;
+        if(job.letter == job.first){
+            sprintf(result.result, ":)");
+        } else {
+            sprintf(result.result, "");
+        }
+        mq_send (mq_fd_result, (char *) &result, sizeof (result), 0);
+    }
 
     mq_close (mq_fd_result);
     mq_close (mq_fd_job);
